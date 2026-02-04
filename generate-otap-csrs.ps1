@@ -2,7 +2,7 @@ $environments = @("dev", "test", "acc", "prod")
 $orgName = "NWB Bank"
 $country = "NL"
 
-Write-Host "Starting CSR generation for OTAP environments..." -ForegroundColor Cyan
+Write-Host "Starting CSR generation (Legacy Compatibility Mode)..." -ForegroundColor Cyan
 
 foreach ($env in $environments) {
     $envUpper = $env.ToUpper()
@@ -12,49 +12,44 @@ foreach ($env in $environments) {
 
     Write-Host "Processing Environment: $envUpper" -ForegroundColor Yellow
 
-    # 1. Generate Private Key (RSA 4096)
+    # 1. Generate Private Key (Dwing RSACryptoServiceProvider af)
     if (-not (Test-Path $keyFile)) {
-        Write-Host "  Generating Private Key ($keyFile)..."
+        Write-Host "  Generating Private Key..."
         
-        $rsa = [System.Security.Cryptography.RSA]::Create(4096)
+        # We gebruiken specifiek de oudere provider die ExportCspBlob ondersteunt
+        $rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider(4096)
         
-        # Oplossing voor PS 5.1: Gebruik de oudere ExportParameters methode
-        # We exporteren de RSAParameters en bouwen de key handmatig (of gebruiken een blob)
-        # Voor maximale compatibiliteit gebruiken we hier CspBlob:
+        # Exporteer de key als een blob en sla op als Base64
         $keyBytes = $rsa.ExportCspBlob($true)
         $keyBase64 = [Convert]::ToBase64String($keyBytes, [Base64FormattingOptions]::InsertLineBreaks)
-        
-        # Let op: Dit is een MS-specifieke blob. Voor een echte PEM (PKCS#8) 
-        # in PS 5.1 is wat meer 'low-level' werk nodig. 
-        # Alternatief: We gebruiken een helper om de key te bewaren.
         Set-Content -Path $keyFile -Value $keyBase64 -Encoding Ascii
     } else {
-        Write-Host "  Private Key ($keyFile) al aanwezig." -ForegroundColor Gray
+        Write-Host "  Private Key aanwezig. Laden..." -ForegroundColor Gray
         $keyBase64 = Get-Content $keyFile -Raw
         $keyBytes = [Convert]::FromBase64String($keyBase64)
-        $rsa = [System.Security.Cryptography.RSA]::Create()
+        $rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider
         $rsa.ImportCspBlob($keyBytes)
     }
 
     # 2. Generate CSR
-    Write-Host "  Generating CSR ($csrFile)..."
+    Write-Host "  Generating CSR..."
     
     $distinguishedName = "CN=$commonName, O=$orgName, C=$country"
     $subject = New-Object System.Security.Cryptography.X509Certificates.X500DistinguishedName $distinguishedName
-    
-    # In PS 5.1 moeten we de CertificateRequest iets anders aanroepen 
-    # omdat de constructor soms kieskeurig is over het type RSA object.
     $hashAlgorithm = [System.Security.Cryptography.HashAlgorithmName]::SHA256
-    
-    # Gebruik de constructor: (DN, RSA, HashName, Padding)
-    $request = New-Object System.Security.Cryptography.X509Certificates.CertificateRequest($subject, $rsa, $hashAlgorithm, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+    $padding = [System.Security.Cryptography.RSASignaturePadding]::Pkcs1
+
+    # De CertificateRequest class accepteert de RSA provider
+    $request = New-Object System.Security.Cryptography.X509Certificates.CertificateRequest($subject, $rsa, $hashAlgorithm, $padding)
 
     $csrBytes = $request.CreateSigningRequest()
     $csrBase64 = [Convert]::ToBase64String($csrBytes, [Base64FormattingOptions]::InsertLineBreaks)
-    $csrPem = "-----BEGIN CERTIFICATE REQUEST-----`n$csrBase64`n-----END CERTIFICATE REQUEST-----"
+    $csrPem = "-----BEGIN CERTIFICATE REQUEST-----`r`n$csrBase64`r`n-----END CERTIFICATE REQUEST-----"
     
     Set-Content -Path $csrFile -Value $csrPem -Encoding Ascii
 
-    Write-Host "  Klaar: $csrFile" -ForegroundColor Green
+    Write-Host "  Succes: $csrFile" -ForegroundColor Green
     Write-Host "----------------------------------------"
 }
+
+Write-Host "Klaar!" -ForegroundColor Cyan
