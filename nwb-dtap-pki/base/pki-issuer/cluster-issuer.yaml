@@ -1,0 +1,7 @@
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: nwb-workspace-ca-issuer
+spec:
+  ca:
+    secretName: nwb-workspace-ca-secret

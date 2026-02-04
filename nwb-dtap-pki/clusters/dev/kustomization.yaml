@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base/pki-issuer
+  - ../base/test-app
+
+patches:
+  - target:
+      kind: Certificate
+      name: app-cert
+    patch: |-
+      - op: replace
+        path: /spec/commonName
+        value: app.dev.nwb.local
+      - op: replace
+        path: /spec/dnsNames/0
+        value: app.dev.nwb.local
