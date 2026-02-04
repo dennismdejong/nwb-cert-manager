@@ -1,16 +1,3 @@
-<#
-.SYNOPSIS
-    Generates Private Keys and CSRs for NWB Bank DTAP environments.
-
-.DESCRIPTION
-    This script iterates through the OTAP environments (dev, test, acc, prod),
-    generates a 4096-bit RSA private key, and creates a Certificate Signing Request (CSR)
-    configured for the "NWB Bank [ENV] Intermediate CA".
-
-.NOTES
-    Does not require 'openssl'. Uses native .NET System.Security.Cryptography.
-#>
-
 $environments = @("dev", "test", "acc", "prod")
 $orgName = "NWB Bank"
 $country = "NL"
@@ -22,7 +9,6 @@ foreach ($env in $environments) {
     $keyFile = "$env-ca.key"
     $csrFile = "$env-ca.csr"
     $commonName = "$orgName $envUpper Intermediate CA"
-    $subject = "/C=$country/O=$orgName/CN=$commonName"
 
     Write-Host "Processing Environment: $envUpper" -ForegroundColor Yellow
 
@@ -32,21 +18,22 @@ foreach ($env in $environments) {
         
         $rsa = [System.Security.Cryptography.RSA]::Create(4096)
         
-        # Export as PKCS#8 PEM
-        $keyBytes = $rsa.ExportPkcs8PrivateKey()
+        # Oplossing voor PS 5.1: Gebruik de oudere ExportParameters methode
+        # We exporteren de RSAParameters en bouwen de key handmatig (of gebruiken een blob)
+        # Voor maximale compatibiliteit gebruiken we hier CspBlob:
+        $keyBytes = $rsa.ExportCspBlob($true)
         $keyBase64 = [Convert]::ToBase64String($keyBytes, [Base64FormattingOptions]::InsertLineBreaks)
-        $keyPem = "-----BEGIN PRIVATE KEY-----`n$keyBase64`n-----END PRIVATE KEY-----"
         
-        Set-Content -Path $keyFile -Value $keyPem -Encoding Ascii
+        # Let op: Dit is een MS-specifieke blob. Voor een echte PEM (PKCS#8) 
+        # in PS 5.1 is wat meer 'low-level' werk nodig. 
+        # Alternatief: We gebruiken een helper om de key te bewaren.
+        Set-Content -Path $keyFile -Value $keyBase64 -Encoding Ascii
     } else {
-        Write-Host "  Private Key ($keyFile) already exists. Skipping generation." -ForegroundColor Gray
-        # Load existing key to generate CSR
-        $keyContent = Get-Content $keyFile -Raw
-        $keyBase64 = $keyContent.Replace("-----BEGIN PRIVATE KEY-----", "").Replace("-----END PRIVATE KEY-----", "").Trim()
+        Write-Host "  Private Key ($keyFile) al aanwezig." -ForegroundColor Gray
+        $keyBase64 = Get-Content $keyFile -Raw
         $keyBytes = [Convert]::FromBase64String($keyBase64)
         $rsa = [System.Security.Cryptography.RSA]::Create()
-        $bytesRead = 0
-        $rsa.ImportPkcs8PrivateKey($keyBytes, [ref]$bytesRead)
+        $rsa.ImportCspBlob($keyBytes)
     }
 
     # 2. Generate CSR
@@ -55,24 +42,19 @@ foreach ($env in $environments) {
     $distinguishedName = "CN=$commonName, O=$orgName, C=$country"
     $subject = New-Object System.Security.Cryptography.X509Certificates.X500DistinguishedName $distinguishedName
     
+    # In PS 5.1 moeten we de CertificateRequest iets anders aanroepen 
+    # omdat de constructor soms kieskeurig is over het type RSA object.
     $hashAlgorithm = [System.Security.Cryptography.HashAlgorithmName]::SHA256
-    $padding = [System.Security.Cryptography.RSASignaturePadding]::Pkcs1
-    $request = [System.Security.Cryptography.X509Certificates.CertificateRequest]::new($subject, $rsa, $hashAlgorithm, $padding)
+    
+    # Gebruik de constructor: (DN, RSA, HashName, Padding)
+    $request = New-Object System.Security.Cryptography.X509Certificates.CertificateRequest($subject, $rsa, $hashAlgorithm, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
 
-    # Create Signing Request
     $csrBytes = $request.CreateSigningRequest()
     $csrBase64 = [Convert]::ToBase64String($csrBytes, [Base64FormattingOptions]::InsertLineBreaks)
     $csrPem = "-----BEGIN CERTIFICATE REQUEST-----`n$csrBase64`n-----END CERTIFICATE REQUEST-----"
     
     Set-Content -Path $csrFile -Value $csrPem -Encoding Ascii
 
-    if (Test-Path $csrFile) {
-        Write-Host "  Successfully created $csrFile" -ForegroundColor Green
-    } else {
-        Write-Host "  Error creating CSR for $env" -ForegroundColor Red
-    }
-    
+    Write-Host "  Klaar: $csrFile" -ForegroundColor Green
     Write-Host "----------------------------------------"
 }
-
-Write-Host "All operations complete." -ForegroundColor Cyan
