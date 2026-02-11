@@ -1,0 +1,16 @@
+# macOS
+.DS_Store
+
+# Private Keys and Certificates
+*.key
+*.csr
+*.crt
+*.pem
+*.pfx
+
+# Kubernetes Secrets (YAML files containing sensitive data)
+*-secret.yaml
+*-secret.yml
+
+# Temporary/Generated Files
+*.tmp
